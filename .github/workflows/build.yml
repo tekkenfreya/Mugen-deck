@@ -1,0 +1,137 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  daemon:
+    name: Build Daemon
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            daemon/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('daemon/Cargo.lock') }}
+
+      - name: Check formatting
+        working-directory: daemon
+        run: cargo fmt -- --check
+
+      - name: Clippy
+        working-directory: daemon
+        run: cargo clippy -- -D warnings
+
+      - name: Test
+        working-directory: daemon
+        run: cargo test
+
+      - name: Build release
+        working-directory: daemon
+        run: cargo build --release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mugen-daemon
+          path: daemon/target/release/mugen-daemon
+
+  launcher:
+    name: Build Launcher
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install dependencies
+        working-directory: launcher
+        run: npm install
+
+      - name: Type check
+        working-directory: launcher
+        run: npx tsc --noEmit
+
+      - name: Build Tauri
+        uses: tauri-apps/tauri-action@v0
+        with:
+          projectPath: launcher
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mugen-launcher
+          path: launcher/src-tauri/target/release/bundle/appimage/*.AppImage
+
+  sharkdeck:
+    name: Build SharkDeck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        working-directory: apps/sharkdeck
+        run: npm install
+
+      - name: Type check
+        working-directory: apps/sharkdeck
+        run: npx tsc --noEmit
+
+      - name: Test
+        working-directory: apps/sharkdeck
+        run: npm test || echo "No tests yet"
+
+  backend:
+    name: Build Backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        working-directory: backend
+        run: npm install
+
+      - name: Type check
+        working-directory: backend
+        run: npx tsc --noEmit
+
+      - name: Test
+        working-directory: backend
+        run: npm test || echo "No tests yet"

@@ -1,0 +1,12 @@
+{
+  "id": "sharkdeck",
+  "name": "SharkDeck",
+  "version": "0.1.0",
+  "description": "Trainer manager for Steam Deck — find, download, and launch game trainers via Proton",
+  "entry": "src/index.ts",
+  "permissions": [
+    "network",
+    "filesystem:cache",
+    "process:spawn"
+  ]
+}
