@@ -1,9 +1,10 @@
-import type {
-  ApiResponse,
-  AppInfo,
-  HealthData,
-  RunningGame,
-  SteamGame,
+import {
+  isApiResponse,
+  type ApiResponse,
+  type AppInfo,
+  type HealthData,
+  type RunningGame,
+  type SteamGame,
 } from "@/types";
 
 const DAEMON_BASE = "http://127.0.0.1:7331";
@@ -34,8 +35,11 @@ async function daemonFetch<T>(
     headers,
   });
 
-  const body = (await resp.json()) as ApiResponse<T>;
-  return body;
+  const body: unknown = await resp.json();
+  if (!isApiResponse(body)) {
+    return { ok: false, error: "invalid response from daemon" };
+  }
+  return body as ApiResponse<T>;
 }
 
 /** GET /health — no auth required. */

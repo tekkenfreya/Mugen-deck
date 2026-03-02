@@ -48,10 +48,7 @@ export function AppGrid({ apps, columns = 3, onSelect }: AppGridProps) {
   }
 
   return (
-    <div
-      className="app-grid"
-      style={{ gridTemplateColumns: `repeat(${columns}, 1fr)` }}
-    >
+    <div className={`app-grid app-grid-cols-${columns}`}>
       {apps.map((app, i) => (
         <AppCard
           key={app.id}

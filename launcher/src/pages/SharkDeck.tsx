@@ -38,12 +38,9 @@ export function SharkDeck({ onBack }: SharkDeckProps) {
     }
   }, [currentGame, search]);
 
-  const handleSelect = useCallback((index: number) => {
-    const trainer = trainers[index];
-    if (!trainer) return;
-    // In full implementation, this would trigger download + launch
-    console.log("Selected trainer:", trainer.name);
-  }, [trainers]);
+  const handleSelect = useCallback((_index: number) => {
+    // In full implementation, this would trigger download + launch via daemon
+  }, []);
 
   useController({
     onBack,

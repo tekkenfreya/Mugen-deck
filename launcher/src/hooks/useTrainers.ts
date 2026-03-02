@@ -56,7 +56,12 @@ export function useTrainers(): UseTrainersReturn {
         return;
       }
 
-      const data = (await resp.json()) as {
+      const raw: unknown = await resp.json();
+      if (typeof raw !== "object" || raw === null || !("ok" in raw)) {
+        setState({ trainers: [], searching: false, error: "Invalid response" });
+        return;
+      }
+      const data = raw as {
         ok: boolean;
         data?: { trainers: TrainerDisplayInfo[] };
         error?: string;

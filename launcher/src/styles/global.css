@@ -30,7 +30,6 @@ body,
   background: var(--bg);
   color: var(--text);
   font-family: system-ui, -apple-system, sans-serif;
-  cursor: none;
   user-select: none;
 }
 
@@ -107,7 +106,13 @@ body,
 .app-grid {
   display: grid;
   gap: 16px;
+  grid-template-columns: repeat(3, 1fr);
 }
+
+.app-grid-cols-1 { grid-template-columns: repeat(1, 1fr); }
+.app-grid-cols-2 { grid-template-columns: repeat(2, 1fr); }
+.app-grid-cols-3 { grid-template-columns: repeat(3, 1fr); }
+.app-grid-cols-4 { grid-template-columns: repeat(4, 1fr); }
 
 .app-grid-empty {
   display: flex;
@@ -374,4 +379,23 @@ body,
   font-size: 13px;
   color: var(--accent);
   font-weight: 600;
+}
+
+/* Exit button */
+.exit-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 6px 14px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.exit-btn:hover {
+  background: var(--danger);
+  color: white;
+  border-color: var(--danger);
 }

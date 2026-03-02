@@ -68,17 +68,23 @@ async fn main() -> Result<()> {
 /// Waits for SIGINT or SIGTERM to initiate graceful shutdown.
 async fn shutdown_signal() {
     let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
+        if let Err(e) = signal::ctrl_c().await {
+            tracing::error!(error = %e, "failed to install Ctrl+C handler");
+            std::future::pending::<()>().await;
+        }
     };
 
     #[cfg(unix)]
     let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to install SIGTERM handler")
-            .recv()
-            .await;
+        match signal::unix::signal(signal::unix::SignalKind::terminate()) {
+            Ok(mut sig) => {
+                sig.recv().await;
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "failed to install SIGTERM handler");
+                std::future::pending::<()>().await;
+            }
+        }
     };
 
     #[cfg(not(unix))]

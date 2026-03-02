@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Install Mugen
+Comment=Install Mugen on your Steam Deck
+Exec=bash -c 'cd "$(dirname "%k")" && konsole -e bash install.sh'
+Icon=application-x-executable
+Type=Application
+Terminal=false

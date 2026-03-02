@@ -5,6 +5,16 @@ export interface ApiResponse<T> {
   error?: string;
 }
 
+/** Validates that a value matches the daemon API response envelope. */
+export function isApiResponse(value: unknown): value is ApiResponse<unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "ok" in value &&
+    typeof (value as ApiResponse<unknown>).ok === "boolean"
+  );
+}
+
 /** Data returned by GET /health. */
 export interface HealthData {
   status: string;

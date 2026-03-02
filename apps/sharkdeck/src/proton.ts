@@ -93,8 +93,15 @@ export async function launchTrainer(config: ProtonConfig): Promise<ChildProcess>
   // Verify proton binary exists
   await access(protonBin);
 
+  const filteredEnv: Record<string, string> = {};
+  for (const [key, val] of Object.entries(process.env)) {
+    if (val !== undefined) {
+      filteredEnv[key] = val;
+    }
+  }
+
   const env: Record<string, string> = {
-    ...process.env as Record<string, string>,
+    ...filteredEnv,
     STEAM_COMPAT_DATA_PATH: config.prefixPath,
     STEAM_COMPAT_CLIENT_INSTALL_PATH: join(
       process.env["HOME"] ?? "",

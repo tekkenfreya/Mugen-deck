@@ -1,6 +1,14 @@
 import { useDaemon } from "@/hooks/useDaemon";
 import type { RunningGame } from "@/types";
 
+declare global {
+  interface Window {
+    mugen?: {
+      quit: () => void;
+    };
+  }
+}
+
 interface StatusBarProps {
   currentGame: RunningGame | null;
 }
@@ -18,6 +26,11 @@ export function StatusBar({ currentGame }: StatusBarProps) {
         <div className="current-game">
           Playing: {currentGame.name}
         </div>
+      )}
+      {window.mugen && (
+        <button className="exit-btn" onClick={() => window.mugen?.quit()}>
+          Exit
+        </button>
       )}
     </div>
   );

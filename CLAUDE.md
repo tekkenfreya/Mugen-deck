@@ -18,7 +18,7 @@
 | Layer | Technology |
 |---|---|
 | Mugen Daemon | Rust (tokio + axum) |
-| Mugen Launcher | Tauri 2.x + React 18 + TypeScript |
+| Mugen Launcher | React 18 + TypeScript (served by daemon via tower-http, displayed in Chrome --app) |
 | Backend API | Node.js (Fastify) |
 | Database | PostgreSQL |
 | Cache / Rate Limit | Redis |
@@ -37,7 +37,7 @@ mugen-deck/
 │   │   ├── main.rs                   # Entry point, server bootstrap
 │   │   ├── config.rs                 # TOML config loading
 │   │   ├── routes/                   # Axum route handlers
-│   │   │   ├── mod.rs
+│   │   │   ├── mod.rs                # Router assembly, CORS, static /ui serving
 │   │   │   ├── health.rs             # GET /health
 │   │   │   ├── apps.rs               # GET /apps, POST /apps/:id/launch|close
 │   │   │   ├── game.rs               # GET /game/current, GET /game/library
@@ -49,15 +49,10 @@ mugen-deck/
 │   │   └── error.rs                  # Unified error types
 │   ├── tests/
 │   └── mugen.service                 # Systemd user service definition
-├── launcher/                         # Mugen Launcher (Tauri + React)
+├── launcher/                         # Mugen Launcher (React SPA, served by daemon)
 │   ├── package.json
 │   ├── tsconfig.json
 │   ├── vite.config.ts
-│   ├── src-tauri/                    # Tauri Rust backend
-│   │   ├── Cargo.toml
-│   │   ├── tauri.conf.json
-│   │   └── src/
-│   │       └── main.rs
 │   └── src/                          # React frontend
 │       ├── main.tsx                  # Entry point
 │       ├── App.tsx                   # Root component, router
@@ -65,16 +60,18 @@ mugen-deck/
 │       │   ├── AppGrid.tsx           # App library grid view
 │       │   ├── AppCard.tsx           # Single app card
 │       │   ├── ControllerNav.tsx     # Controller navigation handler
-│       │   └── StatusBar.tsx         # Daemon connection status
+│       │   ├── StatusBar.tsx         # Daemon connection status + exit button
+│       │   └── TrainerCard.tsx       # Trainer display card
 │       ├── pages/                    # Full-screen pages
 │       │   ├── Home.tsx              # App library
 │       │   ├── AppDetail.tsx         # App detail view
 │       │   ├── Settings.tsx          # Settings page
-│       │   └── UpdateLog.tsx         # Update history
+│       │   └── SharkDeck.tsx         # Trainer search/download/launch UI
 │       ├── hooks/                    # Custom React hooks
 │       │   ├── useDaemon.ts          # Daemon API communication
 │       │   ├── useController.ts      # Gamepad input handling
-│       │   └── useApps.ts            # App state management
+│       │   ├── useApps.ts            # App state management
+│       │   └── useTrainers.ts        # Trainer state management
 │       ├── api/                      # API client layer
 │       │   └── daemon.ts             # Typed daemon REST client
 │       ├── types/                    # TypeScript type definitions
@@ -98,7 +95,8 @@ mugen-deck/
 │       └── src/
 │           ├── index.ts             # Entry point
 │           ├── fling.ts             # Fling trainer database scraper
-│           ├── trainer.ts           # Trainer download + Proton launch
+│           ├── trainer.ts           # Trainer download + cache management
+│           ├── proton.ts            # Proton discovery, isolated prefix, trainer launch
 │           └── types.ts             # Trainer type definitions
 └── scripts/                          # Development & build scripts
     ├── dev.sh                       # Start all services for development
@@ -149,8 +147,9 @@ mugen-deck/
 - All responses are JSON with consistent envelope: `{ "ok": true, "data": ... }` or `{ "ok": false, "error": "..." }`
 - Session token required in `Authorization: Bearer <token>` header for all endpoints except `GET /health`
 - Token generated at daemon startup, rotated every 24 hours, stored in `~/.config/mugen/session.token`
-- CORS: reject all origins — daemon is localhost-only
+- CORS: reject all origins via `tower-http::CorsLayer` — daemon is localhost-only
 - Bind to `127.0.0.1` only — never `0.0.0.0`
+- Serves launcher React SPA at `/ui` via `tower-http::ServeDir` from `~/.local/share/mugen/launcher/ui/`
 
 ### Game Detection
 - Monitor Steam processes via `/proc` filesystem
@@ -166,22 +165,25 @@ All Mugen files live in the user home directory. **Nothing is installed to syste
 ~/.config/mugen/session.token         # Current session token
 ~/.config/mugen/apps/                 # Registered app manifests
 ~/.config/systemd/user/mugen.service  # Systemd user service
-~/.local/share/mugen/launcher/        # Launcher AppImage
+~/.local/share/mugen/launcher/ui/     # Launcher React SPA (built files served by daemon)
+~/.local/bin/mugen-launcher           # Chrome --app wrapper script
 ~/.local/share/mugen/apps/            # Installed app bundles
 ~/.local/share/mugen/profiles/        # Per-game profile data
 ~/.local/share/mugen/logs/            # Daemon and app logs
 ~/.local/share/mugen/cache/           # Trainer cache, metadata cache
+~/.config/mugen-chrome/               # Isolated Chrome profile for launcher
 ```
 
 ---
 
 ## Launcher Specifics
 
-### Tauri Configuration
-- **Target:** AppImage (Linux), single self-contained binary
-- **Window:** fullscreen, no decorations, not resizable
-- **CSP:** strict — only allow connections to `localhost:7331`
-- **Permissions:** minimal — only network (localhost), no filesystem access beyond app directory
+### Architecture (Chrome --app)
+- **How it works:** Daemon serves the React SPA via `tower-http::ServeDir` at `/ui`. Chrome Flatpak opens `http://127.0.0.1:7331/ui/` in `--app` mode (chromeless window). Gamescope handles fullscreen in Gaming Mode automatically.
+- **Why not Tauri:** WebKitGTK is not installed on SteamOS and EGL crashes even after manual install
+- **Why not Electron:** Steam Runtime strips `DISPLAY` env var and `libcups.so.2` — Electron window never appears in Gaming Mode
+- **Launcher wrapper:** `~/.local/bin/mugen-launcher` shell script that runs `flatpak run com.google.Chrome --app=http://127.0.0.1:7331/ui/ --user-data-dir=/home/deck/.config/mugen-chrome`
+- **Chrome flags to avoid:** `--kiosk` (traps user), `--start-fullscreen` (crashes in Gaming Mode), `--no-first-run` (prevents launch)
 
 ### Controller Navigation
 - D-pad: navigate between focusable elements
@@ -257,7 +259,7 @@ All Mugen files live in the user home directory. **Nothing is installed to syste
 cargo run
 
 # Launcher (from launcher/)
-npm install && npm run tauri dev
+npm install && npm run dev    # Vite dev server with HMR
 
 # Backend (from backend/)
 npm install && npm run dev
@@ -268,11 +270,11 @@ npm install && npm run dev
 
 ### Production Build
 ```bash
-# Daemon
+# Daemon (includes serving launcher UI via tower-http)
 cargo build --release --target x86_64-unknown-linux-gnu
 
-# Launcher
-npm run tauri build  # Produces AppImage
+# Launcher (build React SPA, then copy dist/ to ~/.local/share/mugen/launcher/ui/)
+cd launcher && npm run build  # Produces dist/ with static files
 
 # Backend
 npm run build
@@ -322,7 +324,7 @@ These are confirmed real paths — do not invent alternatives:
 ## Phase 1 Scope (Proof of Concept)
 **In scope:**
 - Mugen Daemon (Rust) — systemd service, REST API, game detection
-- Mugen Launcher (Tauri + React) — fullscreen, controller nav, app grid
+- Mugen Launcher (React SPA + Chrome --app) — fullscreen via Gamescope, controller nav, app grid
 - SharkDeck Phase 1 — detect game, download trainer, launch via Proton
 - Backend minimal — app version endpoint only
 - Installer script — one-command install
