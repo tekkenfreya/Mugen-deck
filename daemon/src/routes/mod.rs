@@ -11,7 +11,7 @@ use axum::routing::get;
 use axum::routing::post;
 use axum::Router;
 use tower_http::cors::CorsLayer;
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeDir;
 
 use crate::auth::auth_middleware;
 use crate::AppState;
@@ -35,9 +35,7 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/token", get(auth::get_token))
         .nest_service(
             "/ui",
-            ServeDir::new(&ui_dir)
-                .append_index_html_on_directories(true)
-                .fallback(ServeFile::new(format!("{}/index.html", ui_dir))),
+            ServeDir::new(&ui_dir).append_index_html_on_directories(true),
         )
         .with_state(state.clone());
 
@@ -59,7 +57,6 @@ pub fn router(state: AppState) -> Router {
         .route("/sharkdeck/enabled", post(sharkdeck::enabled))
         .route("/sharkdeck/cancel", post(sharkdeck::cancel))
         .route("/sharkdeck/status", get(sharkdeck::status))
-        .route("/sharkdeck/hotkey", post(sharkdeck::hotkey))
         // System
         .route("/system/stats", get(system::system_stats))
         .route("/system/profile/{game_id}", post(system::set_profile))

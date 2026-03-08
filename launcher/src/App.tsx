@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { SharkDeck } from "@/pages/SharkDeck";
-import { CheatBoard } from "@/pages/CheatBoard";
 import { getAuthToken, setSessionToken } from "@/api/daemon";
 
 export function App() {
@@ -23,8 +22,5 @@ export function App() {
 
   if (!ready) return null;
 
-  // Route based on URL path — daemon serves both at /ui/ and /ui/cheatboard
-  const isCheatBoard = window.location.pathname.includes("/cheatboard");
-
-  return isCheatBoard ? <CheatBoard /> : <SharkDeck />;
+  return <SharkDeck />;
 }
