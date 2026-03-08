@@ -1,31 +1,22 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { searchTrainers } from "@/api/daemon";
+import type { TrainerInfo } from "@/types";
 
-/** Trainer info as displayed in the launcher UI. */
-export interface TrainerDisplayInfo {
-  name: string;
-  gameName: string;
-  version: string;
-  downloadUrl: string;
-  source: string;
-}
+const SEARCH_TIMEOUT_MS = 30_000;
 
 interface TrainersState {
-  trainers: TrainerDisplayInfo[];
+  trainers: TrainerInfo[];
   searching: boolean;
   error: string | null;
 }
 
 interface UseTrainersReturn extends TrainersState {
   search: (gameName: string) => Promise<void>;
+  cancelSearch: () => void;
   clear: () => void;
 }
 
-/**
- * Manages trainer search state.
- *
- * In Phase 1, this is a placeholder that would communicate with the SharkDeck app
- * via the daemon's app communication API. For now, it demonstrates the UI flow.
- */
+/** Manages trainer search state via the daemon SharkDeck API. */
 export function useTrainers(): UseTrainersReturn {
   const [state, setState] = useState<TrainersState>({
     trainers: [],
@@ -33,43 +24,49 @@ export function useTrainers(): UseTrainersReturn {
     error: null,
   });
 
+  const abortRef = useRef<AbortController | null>(null);
+
+  const cancelSearch = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    setState((prev) => ({
+      ...prev,
+      searching: false,
+      error: prev.searching ? "Search cancelled" : prev.error,
+    }));
+  }, []);
+
   const search = useCallback(async (gameName: string) => {
+    // Cancel any in-flight search
+    if (abortRef.current) {
+      abortRef.current.abort();
+    }
+
     setState({ trainers: [], searching: true, error: null });
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    // Timeout: auto-abort after 30s
+    const timeout = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
+
     try {
-      // In production, this would call the daemon which forwards to SharkDeck
-      // For now, stub with a timeout to show loading state
-      const resp = await fetch(
-        `http://127.0.0.1:7331/apps/sharkdeck/action/search?game=${encodeURIComponent(gameName)}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        },
-      );
+      const resp = await Promise.race([
+        searchTrainers(gameName),
+        new Promise<never>((_, reject) => {
+          controller.signal.addEventListener("abort", () =>
+            reject(new DOMException("Search timed out", "AbortError")),
+          );
+        }),
+      ]);
 
-      if (!resp.ok) {
+      if (controller.signal.aborted) return;
+
+      if (resp.ok && resp.data) {
         setState({
-          trainers: [],
-          searching: false,
-          error: "Trainer search not available yet",
-        });
-        return;
-      }
-
-      const raw: unknown = await resp.json();
-      if (typeof raw !== "object" || raw === null || !("ok" in raw)) {
-        setState({ trainers: [], searching: false, error: "Invalid response" });
-        return;
-      }
-      const data = raw as {
-        ok: boolean;
-        data?: { trainers: TrainerDisplayInfo[] };
-        error?: string;
-      };
-
-      if (data.ok && data.data) {
-        setState({
-          trainers: data.data.trainers,
+          trainers: resp.data.trainers,
           searching: false,
           error: null,
         });
@@ -77,21 +74,38 @@ export function useTrainers(): UseTrainersReturn {
         setState({
           trainers: [],
           searching: false,
-          error: data.error ?? "search failed",
+          error: resp.error ?? "search failed",
         });
       }
-    } catch {
+    } catch (e) {
+      if (controller.signal.aborted) {
+        setState({
+          trainers: [],
+          searching: false,
+          error: "Search timed out — try a different name",
+        });
+        return;
+      }
       setState({
         trainers: [],
         searching: false,
         error: "Cannot reach daemon",
       });
+    } finally {
+      clearTimeout(timeout);
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
     }
   }, []);
 
   const clear = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
     setState({ trainers: [], searching: false, error: null });
   }, []);
 
-  return { ...state, search, clear };
+  return { ...state, search, cancelSearch, clear };
 }

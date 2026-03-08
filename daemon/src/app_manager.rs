@@ -57,7 +57,7 @@ impl AppManager {
         }
     }
 
-    /// Loads app manifests from `~/.config/mugen/apps/`.
+    /// Loads app manifests from `~/.config/sharkdeck/apps/`.
     pub async fn load_manifests(&self) -> Result<()> {
         let apps_dir = crate::config::config_dir()?.join("apps");
         if !apps_dir.exists() {

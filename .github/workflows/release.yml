@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Daemon
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            daemon/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('daemon/Cargo.lock') }}
+
+      - name: Build daemon
+        working-directory: daemon
+        run: cargo build --release
+
+      # Launcher
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: launcher/package-lock.json
+
+      - name: Build launcher
+        working-directory: launcher
+        run: npm ci && npm run build
+
+      # Package
+      - name: Package release
+        run: |
+          mkdir -p mugen-install/ui
+          cp daemon/target/release/mugen-daemon mugen-install/
+          cp -r launcher/dist/* mugen-install/ui/
+          cp installer/install.sh mugen-install/
+          tar -czf mugen-install.tar.gz mugen-install/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: mugen-install.tar.gz
+          generate_release_notes: true

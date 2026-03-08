@@ -35,3 +35,15 @@ Thumbs.db
 
 # Logs
 *.log
+
+# SharkDeck public install (separate repo)
+sharkdeck-install/
+
+# Dev scratch files
+commands.md
+log.md
+daemon/test_gcw.html
+install-dotnet.sh
+
+# Dev artifacts
+screenshots.png

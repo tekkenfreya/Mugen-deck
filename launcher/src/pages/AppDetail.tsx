@@ -27,15 +27,15 @@ export function AppDetail({ app, onBack }: AppDetailProps) {
     <div className="page">
       <div className="page-content app-detail">
         <button className="back-btn" onClick={onBack}>
-          Back
+          &lt; BACK
         </button>
         <div className="app-detail-header">
           <div className="app-detail-icon">
             {app.name.charAt(0).toUpperCase()}
           </div>
           <div>
-            <h2>{app.name}</h2>
-            <p className="dim">v{app.version}</p>
+            <h2>{app.name.toUpperCase()}</h2>
+            <p className="dim">V{app.version}</p>
           </div>
         </div>
         <p className="app-detail-desc">{app.description}</p>
@@ -43,7 +43,7 @@ export function AppDetail({ app, onBack }: AppDetailProps) {
           className={`action-btn ${isRunning ? "danger" : "primary"}`}
           onClick={() => (isRunning ? close(app.id) : launch(app.id))}
         >
-          {isRunning ? "Stop" : "Launch"}
+          {isRunning ? "TERMINATE" : "EXECUTE"}
         </button>
       </div>
     </div>

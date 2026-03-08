@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useController } from "@/hooks/useController";
 import { AppCard } from "@/components/AppCard";
 import type { AppInfo } from "@/types";
@@ -9,8 +9,17 @@ interface AppGridProps {
   onSelect: (app: AppInfo) => void;
 }
 
-export function AppGrid({ apps, columns = 3, onSelect }: AppGridProps) {
+export function AppGrid({ apps, onSelect }: AppGridProps) {
   const [focusIndex, setFocusIndex] = useState(0);
+
+  // Move native DOM focus to the highlighted app card
+  useEffect(() => {
+    if (apps.length > 0) {
+      const cards = document.querySelectorAll('.app-card');
+      const el = cards[focusIndex] as HTMLElement | undefined;
+      el?.focus({ preventScroll: false });
+    }
+  }, [focusIndex, apps.length]);
 
   useController({
     onNavigate: (dir) => {
@@ -20,9 +29,9 @@ export function AppGrid({ apps, columns = 3, onSelect }: AppGridProps) {
 
         switch (dir) {
           case "up":
-            return Math.max(0, prev - columns);
+            return Math.max(0, prev - 1);
           case "down":
-            return Math.min(total - 1, prev + columns);
+            return Math.min(total - 1, prev + 1);
           case "left":
             return Math.max(0, prev - 1);
           case "right":
@@ -41,20 +50,21 @@ export function AppGrid({ apps, columns = 3, onSelect }: AppGridProps) {
   if (apps.length === 0) {
     return (
       <div className="app-grid-empty">
-        <p>No apps installed</p>
-        <p className="dim">Apps will appear here once registered with the daemon</p>
+        <p>NO APPS INSTALLED</p>
+        <p className="dim">APPS WILL APPEAR HERE ONCE REGISTERED WITH THE DAEMON</p>
       </div>
     );
   }
 
   return (
-    <div className={`app-grid app-grid-cols-${columns}`}>
+    <div className="app-grid">
       {apps.map((app, i) => (
         <AppCard
           key={app.id}
           app={app}
           focused={i === focusIndex}
           onSelect={() => onSelect(app)}
+          onHover={() => setFocusIndex(i)}
         />
       ))}
     </div>

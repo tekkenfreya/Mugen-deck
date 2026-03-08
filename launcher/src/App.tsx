@@ -1,43 +1,30 @@
-import { useState } from "react";
-import { Home } from "@/pages/Home";
-import { AppDetail } from "@/pages/AppDetail";
-import { Settings } from "@/pages/Settings";
+import { useEffect, useState } from "react";
 import { SharkDeck } from "@/pages/SharkDeck";
-import type { AppInfo } from "@/types";
-
-type Page =
-  | { kind: "home" }
-  | { kind: "app-detail"; app: AppInfo }
-  | { kind: "settings" }
-  | { kind: "sharkdeck" };
+import { CheatBoard } from "@/pages/CheatBoard";
+import { getAuthToken, setSessionToken } from "@/api/daemon";
 
 export function App() {
-  const [page, setPage] = useState<Page>({ kind: "home" });
+  const [ready, setReady] = useState(false);
 
-  switch (page.kind) {
-    case "home":
-      return (
-        <Home
-          onSelectApp={(app) => {
-            // Route to SharkDeck page if that app is selected
-            if (app.id === "sharkdeck") {
-              setPage({ kind: "sharkdeck" });
-            } else {
-              setPage({ kind: "app-detail", app });
-            }
-          }}
-        />
-      );
-    case "app-detail":
-      return (
-        <AppDetail
-          app={page.app}
-          onBack={() => setPage({ kind: "home" })}
-        />
-      );
-    case "settings":
-      return <Settings onBack={() => setPage({ kind: "home" })} />;
-    case "sharkdeck":
-      return <SharkDeck onBack={() => setPage({ kind: "home" })} />;
-  }
+  useEffect(() => {
+    getAuthToken()
+      .then((resp) => {
+        if (resp.ok && resp.data) {
+          setSessionToken(resp.data.token);
+        }
+      })
+      .catch(() => {
+        // Daemon unreachable — continue anyway
+      })
+      .finally(() => {
+        setReady(true);
+      });
+  }, []);
+
+  if (!ready) return null;
+
+  // Route based on URL path — daemon serves both at /ui/ and /ui/cheatboard
+  const isCheatBoard = window.location.pathname.includes("/cheatboard");
+
+  return isCheatBoard ? <CheatBoard /> : <SharkDeck />;
 }

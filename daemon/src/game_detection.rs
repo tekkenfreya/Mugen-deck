@@ -9,6 +9,11 @@ use tokio::sync::RwLock;
 use tokio::time::{self, Duration};
 use tracing::{debug, info, warn};
 
+/// Poll interval when no game is running — low frequency to minimize overhead.
+const IDLE_POLL_SECS: u64 = 30;
+/// Poll interval when a game is running — faster for responsive cheat panel.
+const ACTIVE_POLL_SECS: u64 = 5;
+
 /// Represents a Steam game detected from .acf manifest files.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SteamGame {
@@ -61,12 +66,24 @@ impl GameDetector {
             .join("steamapps"))
     }
 
-    /// Starts the background polling loop (5s interval).
+    /// Starts the background polling loop with adaptive intervals.
+    ///
+    /// Polls every 15s when idle, every 5s when a game is running.
+    /// All blocking filesystem I/O is offloaded to `spawn_blocking` to
+    /// avoid starving the tokio async runtime.
     pub fn start_polling(self) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
-            let mut interval = time::interval(Duration::from_secs(5));
             loop {
-                interval.tick().await;
+                // Determine poll interval based on whether a game is running
+                let has_game = self.current_game.read().await.is_some();
+                let poll_secs = if has_game {
+                    ACTIVE_POLL_SECS
+                } else {
+                    IDLE_POLL_SECS
+                };
+
+                time::sleep(Duration::from_secs(poll_secs)).await;
+
                 if let Err(e) = self.scan_library().await {
                     warn!(error = %e, "library scan failed");
                 }
@@ -78,69 +95,160 @@ impl GameDetector {
     }
 
     /// Scans `.acf` files to build the game library.
+    ///
+    /// Uses `spawn_blocking` to keep blocking I/O off the async runtime.
     async fn scan_library(&self) -> Result<()> {
         let steamapps = Self::steamapps_dir()?;
-        if !steamapps.exists() {
-            debug!(path = %steamapps.display(), "steamapps directory not found");
-            return Ok(());
-        }
+        let last_scan_ref = self.last_scan.clone();
 
-        let mut needs_rescan = false;
-        let mut last_scan = self.last_scan.write().await;
+        // Snapshot mtimes under read lock (cheap — just clone the HashMap)
+        let last_scan_snapshot = self.last_scan.read().await.clone();
 
-        let entries = std::fs::read_dir(&steamapps)
-            .with_context(|| format!("failed to read {}", steamapps.display()))?;
+        // Offload all blocking filesystem work to a dedicated thread
+        let (needs_rescan, new_scan_map, games) = tokio::task::spawn_blocking(move || {
+            scan_library_blocking(&steamapps, &last_scan_snapshot)
+        })
+        .await
+        .context("library scan task panicked")??;
 
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("acf") {
-                continue;
-            }
-            if let Ok(meta) = std::fs::metadata(&path) {
-                if let Ok(modified) = meta.modified() {
-                    let prev = last_scan.get(&path);
-                    if prev.is_none() || prev.is_some_and(|t| *t != modified) {
-                        needs_rescan = true;
-                        last_scan.insert(path, modified);
-                    }
-                }
+        // Update scan timestamps
+        if !new_scan_map.is_empty() {
+            let mut last_scan = last_scan_ref.write().await;
+            for (path, mtime) in new_scan_map {
+                last_scan.insert(path, mtime);
             }
         }
 
-        if !needs_rescan {
-            return Ok(());
+        // Update library if changed
+        if needs_rescan {
+            info!(count = games.len(), "library scan complete");
+            *self.library.write().await = games;
         }
 
-        let mut games = Vec::new();
-        let entries = std::fs::read_dir(&steamapps)?;
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("acf") {
-                continue;
-            }
-            match parse_acf(&path) {
-                Ok(game) => games.push(game),
-                Err(e) => warn!(path = %path.display(), error = %e, "failed to parse .acf"),
-            }
-        }
-
-        info!(count = games.len(), "library scan complete");
-        *self.library.write().await = games;
         Ok(())
     }
 
-    /// Detects a running Steam game by scanning `/proc`.
+    /// Detects a running Steam game.
+    ///
+    /// Fast path: if a game is already detected, just checks if that PID is still alive.
+    /// Slow path: full `/proc` scan, offloaded to `spawn_blocking`.
     async fn detect_running_game(&self) -> Result<()> {
-        let library = self.library.read().await;
-        if library.is_empty() {
-            return Ok(());
+        // Fast path: check if the known game PID is still running
+        if let Some(current) = self.current_game.read().await.clone() {
+            let pid = current.pid;
+            let still_running = tokio::task::spawn_blocking(move || is_pid_alive(pid))
+                .await
+                .context("pid check panicked")?;
+
+            if still_running {
+                return Ok(());
+            }
+
+            // Game exited — clear and fall through to full scan
+            debug!(pid = pid, game = %current.name, "game process exited");
+            *self.current_game.write().await = None;
         }
 
-        let running = find_running_steam_game(&library)?;
+        // Slow path: full /proc scan — offloaded to blocking thread
+        let library_ref = self.library.clone();
+        let running = tokio::task::spawn_blocking(move || {
+            let library = library_ref.blocking_read();
+            if library.is_empty() {
+                return Ok(None);
+            }
+            find_running_steam_game(&library)
+        })
+        .await
+        .context("proc scan panicked")??;
+
+        if let Some(ref game) = running {
+            info!(app_id = %game.app_id, name = %game.name, pid = game.pid, "game detected");
+        }
+
         *self.current_game.write().await = running;
         Ok(())
     }
+}
+
+/// App IDs that are Steam tools/runtimes, not actual games.
+/// These must be excluded from game detection.
+const IGNORED_APP_IDS: &[&str] = &[
+    "228980",  // Steamworks Common Redistributables
+    "1070560", // Steam Linux Runtime 1.0 (scout)
+    "1391110", // Steam Linux Runtime 2.0 (soldier)
+    "1628350", // Steam Linux Runtime 3.0 (sniper)
+];
+
+/// Returns true if this game entry is a Steam tool/runtime, not a real game.
+fn is_steam_tool(game: &SteamGame) -> bool {
+    if IGNORED_APP_IDS.contains(&game.app_id.as_str()) {
+        return true;
+    }
+    let lower = game.name.to_lowercase();
+    lower.contains("steam linux runtime")
+        || lower.contains("proton ")
+        || lower.contains("steamworks")
+}
+
+/// Blocking library scan — runs on a dedicated thread via `spawn_blocking`.
+///
+/// Returns (needs_rescan, updated_mtime_map, games).
+fn scan_library_blocking(
+    steamapps: &Path,
+    last_scan: &HashMap<PathBuf, SystemTime>,
+) -> Result<(bool, HashMap<PathBuf, SystemTime>, Vec<SteamGame>)> {
+    if !steamapps.exists() {
+        debug!(path = %steamapps.display(), "steamapps directory not found");
+        return Ok((false, HashMap::new(), Vec::new()));
+    }
+
+    let mut needs_rescan = false;
+    let mut new_scan_map = HashMap::new();
+
+    let entries = std::fs::read_dir(steamapps)
+        .with_context(|| format!("failed to read {}", steamapps.display()))?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("acf") {
+            continue;
+        }
+        if let Ok(meta) = std::fs::metadata(&path) {
+            if let Ok(modified) = meta.modified() {
+                let prev = last_scan.get(&path);
+                if prev.is_none() || prev.is_some_and(|t| *t != modified) {
+                    needs_rescan = true;
+                    new_scan_map.insert(path, modified);
+                }
+            }
+        }
+    }
+
+    if !needs_rescan {
+        return Ok((false, new_scan_map, Vec::new()));
+    }
+
+    let mut games = Vec::new();
+    let entries = std::fs::read_dir(steamapps)?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("acf") {
+            continue;
+        }
+        match parse_acf(&path) {
+            Ok(game) => {
+                if is_steam_tool(&game) {
+                    debug!(app_id = %game.app_id, name = %game.name, "skipping steam tool");
+                    continue;
+                }
+                games.push(game);
+            }
+            Err(e) => warn!(path = %path.display(), error = %e, "failed to parse .acf"),
+        }
+    }
+
+    Ok((true, new_scan_map, games))
 }
 
 /// Parses a Steam `.acf` manifest file into a `SteamGame`.
@@ -184,7 +292,17 @@ fn extract_acf_value(content: &str, key: &str) -> Option<String> {
     None
 }
 
+/// Checks if a process with the given PID is still alive.
+///
+/// Lightweight — just checks if `/proc/<pid>` exists.
+fn is_pid_alive(pid: u32) -> bool {
+    Path::new(&format!("/proc/{}", pid)).exists()
+}
+
 /// Scans `/proc` for running Steam game processes.
+///
+/// This is the expensive operation — reads cmdline for every process.
+/// Must run on a blocking thread via `spawn_blocking`.
 fn find_running_steam_game(library: &[SteamGame]) -> Result<Option<RunningGame>> {
     let proc_dir = Path::new("/proc");
     if !proc_dir.exists() {
@@ -201,15 +319,28 @@ fn find_running_steam_game(library: &[SteamGame]) -> Result<Option<RunningGame>>
             Err(_) => continue,
         };
 
+        // Skip low PIDs (kernel threads, init) — games are always high PIDs
+        if pid < 1000 {
+            continue;
+        }
+
         let cmdline_path = entry.path().join("cmdline");
         let cmdline = match std::fs::read_to_string(&cmdline_path) {
             Ok(c) => c,
             Err(_) => continue,
         };
 
+        // Skip short cmdlines and known non-game processes
+        if cmdline.len() < 5
+            || cmdline.contains("steamwebhelper")
+            || cmdline.contains("steam-runtime")
+        {
+            continue;
+        }
+
         // Look for game executables in the steam library paths
         for game in library {
-            if cmdline.contains(&game.install_dir) && !cmdline.contains("steamwebhelper") {
+            if !game.install_dir.is_empty() && cmdline.contains(&game.install_dir) {
                 return Ok(Some(RunningGame {
                     app_id: game.app_id.clone(),
                     name: game.name.clone(),

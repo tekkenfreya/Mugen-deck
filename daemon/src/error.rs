@@ -2,7 +2,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
 
-/// Unified error type for the Mugen daemon.
+/// Unified error type for the SharkDeck daemon.
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
     #[error("not found: {0}")]

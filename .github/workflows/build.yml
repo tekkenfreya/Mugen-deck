@@ -2,9 +2,9 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
-    branches: [main]
+    branches: [master]
 
 env:
   CARGO_TERM_COLOR: always
@@ -62,56 +62,26 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          cache: npm
+          cache-dependency-path: launcher/package-lock.json
 
       - name: Install dependencies
         working-directory: launcher
-        run: npm install
+        run: npm ci
 
       - name: Type check
         working-directory: launcher
         run: npx tsc --noEmit
 
-      - name: Build Tauri
-        uses: tauri-apps/tauri-action@v0
-        with:
-          projectPath: launcher
+      - name: Build
+        working-directory: launcher
+        run: npm run build
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mugen-launcher
-          path: launcher/src-tauri/target/release/bundle/appimage/*.AppImage
-
-  sharkdeck:
-    name: Build SharkDeck
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install dependencies
-        working-directory: apps/sharkdeck
-        run: npm install
-
-      - name: Type check
-        working-directory: apps/sharkdeck
-        run: npx tsc --noEmit
-
-      - name: Test
-        working-directory: apps/sharkdeck
-        run: npm test || echo "No tests yet"
+          name: mugen-launcher-ui
+          path: launcher/dist/
 
   backend:
     name: Build Backend
@@ -123,10 +93,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
 
       - name: Install dependencies
         working-directory: backend
-        run: npm install
+        run: npm ci
 
       - name: Type check
         working-directory: backend

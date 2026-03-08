@@ -2,9 +2,14 @@ import {
   isApiResponse,
   type ApiResponse,
   type AppInfo,
+  type AuthTokenData,
   type HealthData,
   type RunningGame,
+  type SearchResult,
+  type SharkDeckStatusInfo,
   type SteamGame,
+  type TrainerConfig,
+  type TrainerInfo,
 } from "@/types";
 
 const DAEMON_BASE = "http://127.0.0.1:7331";
@@ -80,4 +85,67 @@ export async function getCurrentGame(): Promise<
 /** GET /game/library — all detected Steam games. */
 export async function getGameLibrary(): Promise<ApiResponse<SteamGame[]>> {
   return daemonFetch<SteamGame[]>("/game/library");
+}
+
+/** GET /auth/token — fetch session token (public, no auth). */
+export async function getAuthToken(): Promise<ApiResponse<AuthTokenData>> {
+  return daemonFetch<AuthTokenData>("/auth/token");
+}
+
+/** POST /sharkdeck/search — search for trainers. */
+export async function searchTrainers(
+  game: string,
+): Promise<ApiResponse<SearchResult>> {
+  return daemonFetch<SearchResult>("/sharkdeck/search", {
+    method: "POST",
+    body: JSON.stringify({ game }),
+  });
+}
+
+/** POST /sharkdeck/enable — start trainer download in background. */
+export async function enableTrainer(
+  trainer: TrainerInfo,
+  appId: string,
+): Promise<ApiResponse<{ started: boolean }>> {
+  return daemonFetch<{ started: boolean }>("/sharkdeck/enable", {
+    method: "POST",
+    body: JSON.stringify({ trainer, app_id: appId }),
+  });
+}
+
+/** POST /sharkdeck/disable — remove trainer config for a game. */
+export async function disableTrainer(
+  appId: string,
+): Promise<ApiResponse<{ disabled: boolean }>> {
+  return daemonFetch<{ disabled: boolean }>("/sharkdeck/disable", {
+    method: "POST",
+    body: JSON.stringify({ app_id: appId }),
+  });
+}
+
+/** POST /sharkdeck/enabled — check if a trainer is enabled for a game. */
+export async function getEnabledTrainer(
+  appId: string,
+): Promise<ApiResponse<TrainerConfig | null>> {
+  return daemonFetch<TrainerConfig | null>("/sharkdeck/enabled", {
+    method: "POST",
+    body: JSON.stringify({ app_id: appId }),
+  });
+}
+
+/** POST /sharkdeck/cancel — cancel active download/install. */
+export async function cancelSharkDeck(): Promise<
+  ApiResponse<{ cancelled: boolean }>
+> {
+  return daemonFetch<{ cancelled: boolean }>("/sharkdeck/cancel", {
+    method: "POST",
+  });
+}
+
+
+/** GET /sharkdeck/status — get SharkDeck status. */
+export async function getSharkDeckStatus(): Promise<
+  ApiResponse<SharkDeckStatusInfo>
+> {
+  return daemonFetch<SharkDeckStatusInfo>("/sharkdeck/status");
 }

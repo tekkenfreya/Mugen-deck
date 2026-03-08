@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use types::{
     EnableResult, SearchResult, SharkDeckStatus, SharkDeckStatusInfo, TrainerConfig, TrainerInfo,
@@ -21,6 +21,7 @@ struct SharkDeckState {
     status: SharkDeckStatus,
     current_trainer: Option<TrainerInfo>,
     error: Option<String>,
+    progress: Option<String>,
 }
 
 /// Manages the SharkDeck trainer lifecycle.
@@ -32,7 +33,7 @@ struct SharkDeckState {
 /// - Installing .NET dependencies (winetricks)
 /// - Writing per-game config files read by `trainer-hook.sh`
 ///
-/// The hook script (`~/.local/share/mugen/trainer-hook.sh`) runs before
+/// The hook script (`~/.local/share/sharkdeck/trainer-hook.sh`) runs before
 /// each game launch and sets `PROTON_REMOTE_DEBUG_CMD` if a trainer is
 /// configured for that game.
 #[derive(Clone)]
@@ -55,9 +56,16 @@ impl SharkDeckManager {
                 status: SharkDeckStatus::Idle,
                 current_trainer: None,
                 error: None,
+                progress: None,
             })),
             http_client: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Updates the progress message shown to the user.
+    async fn set_progress(&self, msg: &str) {
+        let mut state = self.state.write().await;
+        state.progress = Some(msg.to_string());
     }
 
     /// Returns the HTTP client, creating it on first use.
@@ -69,8 +77,8 @@ impl SharkDeckManager {
             }
         }
         let client = reqwest::Client::builder()
-            .user_agent("mugen-daemon")
-            .timeout(std::time::Duration::from_secs(30))
+            .user_agent("sharkdeck-daemon")
+            .timeout(std::time::Duration::from_secs(60))
             .build()
             .unwrap_or_default();
         *self.http_client.write().await = Some(client.clone());
@@ -85,6 +93,7 @@ impl SharkDeckManager {
             let mut state = self.state.write().await;
             state.status = SharkDeckStatus::Searching;
             state.error = None;
+            state.progress = Some("Scanning trainer databases...".to_string());
         }
 
         let client = self.client().await;
@@ -96,12 +105,14 @@ impl SharkDeckManager {
         );
 
         let mut trainers = Vec::new();
+        let mut sources = Vec::new();
 
         // Merge Fling results
         match fling_result {
             Ok(fling) => {
-                debug!(count = fling.trainers.len(), "fling results");
+                info!(count = fling.trainers.len(), "fling results");
                 trainers.extend(fling.trainers);
+                sources.push("fling");
             }
             Err(e) => {
                 warn!(error = %e, "fling search failed, continuing with other sources");
@@ -111,16 +122,24 @@ impl SharkDeckManager {
         // Merge GCW results
         match gcw_result {
             Ok(gcw_trainers) => {
-                debug!(count = gcw_trainers.len(), "gcw results");
+                info!(count = gcw_trainers.len(), "gcw results");
                 trainers.extend(gcw_trainers);
+                sources.push("gcw");
             }
             Err(e) => {
                 warn!(error = %e, "gcw search failed, continuing with other sources");
             }
         }
 
+        let source = if sources.is_empty() {
+            "none".to_string()
+        } else {
+            sources.join("+")
+        };
+
         info!(
             total = trainers.len(),
+            source = %source,
             query = %game_name,
             "combined trainer search complete"
         );
@@ -128,12 +147,13 @@ impl SharkDeckManager {
         {
             let mut state = self.state.write().await;
             state.status = SharkDeckStatus::Idle;
+            state.progress = None;
         }
 
         Ok(SearchResult {
             query: game_name.to_string(),
             trainers,
-            source: "fling+gcw".to_string(),
+            source,
         })
     }
 
@@ -154,6 +174,7 @@ impl SharkDeckManager {
             state.status = SharkDeckStatus::Downloading;
             state.current_trainer = Some(trainer_info.clone());
             state.error = None;
+            state.progress = Some("Preparing download...".to_string());
         }
 
         let this = self.clone();
@@ -166,6 +187,7 @@ impl SharkDeckManager {
                     let mut state = this.state.write().await;
                     state.status = SharkDeckStatus::Idle;
                     state.error = Some(e.to_string());
+                    state.progress = None;
                     tracing::warn!(error = %e, app_id = %app_id, "trainer enable failed");
                 }
             }
@@ -183,22 +205,94 @@ impl SharkDeckManager {
         {
             let mut state = self.state.write().await;
             state.status = SharkDeckStatus::Downloading;
+            state.progress = Some("Resolving download link...".to_string());
         }
 
         let client = self.client().await;
 
         // Source-aware download: GCW uses its own URL resolution chain and may
         // deliver .rar archives that need extraction. Fling delivers .exe directly.
+        //
+        // GCW's resolved URLs (mobiletarget.net) are time-limited tokens. If the
+        // download body read fails (timeout, connection reset), we must re-resolve
+        // a fresh URL — retrying the same stale URL will always fail.
         let trainer_path = if trainer_info.source == "gcw" {
-            let resolved_url =
-                gcw::resolve_download_url(&client, &trainer_info.download_url).await?;
-            trainer::download_and_extract_trainer(&client, trainer_info, &resolved_url).await?
+            let mut last_error: Option<anyhow::Error> = None;
+            let mut gcw_path: Option<String> = None;
+
+            for attempt in 1u64..=3 {
+                if attempt > 1 {
+                    let delay = std::time::Duration::from_secs(attempt * 2);
+                    self.set_progress(&format!("Retrying download (attempt {}/3)...", attempt)).await;
+                    tokio::time::sleep(delay).await;
+                }
+
+                // Re-resolve on every attempt — URLs are time-limited tokens
+                self.set_progress(&format!("Resolving download link{}...", if attempt > 1 { " (retry)" } else { " (1/3)" })).await;
+                let resolved_url = match gcw::resolve_download_url(&client, &trainer_info.download_url).await {
+                    Ok(url) => url,
+                    Err(e) => {
+                        let msg = e.to_string();
+                        if msg.contains("Cloudflare") || msg.contains("anti-bot") {
+                            last_error = Some(e);
+                            continue;
+                        }
+                        return Err(e);
+                    }
+                };
+
+                self.set_progress("Downloading trainer file...").await;
+                // Pass original URL too — the resolved mobiletarget.net URL has no .rar
+                // hint, but the original dl.gamecopyworld.com URL contains "!rar".
+                match trainer::download_and_extract_trainer(
+                    &client,
+                    trainer_info,
+                    &resolved_url,
+                    Some(&trainer_info.download_url),
+                )
+                .await {
+                    Ok(path) => {
+                        gcw_path = Some(path);
+                        break;
+                    }
+                    Err(e) => {
+                        let msg = e.to_string();
+                        // Clear bad cached files so next attempt re-downloads
+                        if msg.contains("HTML instead of") || msg.contains("not a valid RAR") {
+                            let safe_name = trainer::sanitize_filename(&trainer_info.name);
+                            if let Ok(cache) = std::env::var("HOME") {
+                                let bad_file = std::path::PathBuf::from(cache)
+                                    .join(".local/share/sharkdeck/cache/trainers")
+                                    .join(format!("{}.rar", safe_name));
+                                tokio::fs::remove_file(&bad_file).await.ok();
+                            }
+                        }
+                        warn!(attempt = attempt, error = %e, "GCW download attempt failed");
+                        last_error = Some(e);
+                    }
+                }
+            }
+
+            match gcw_path {
+                Some(path) => path,
+                None => {
+                    let err = last_error.unwrap_or_else(|| anyhow::anyhow!("GCW download failed after 3 attempts"));
+                    let msg = err.to_string();
+                    if msg.contains("Cloudflare") || msg.contains("anti-bot") || msg.contains("HTML instead of") {
+                        anyhow::bail!("GCW download blocked by anti-bot protection. Try a FLiNG trainer instead.");
+                    }
+                    anyhow::bail!("GCW download failed after 3 attempts: {}", msg);
+                }
+            }
         } else {
+            self.set_progress("Resolving download link...").await;
             let resolved = fling::resolve_download_url(&client, &trainer_info.download_url).await?;
+            self.set_progress("Downloading trainer file...").await;
             trainer::download_trainer(&client, trainer_info, &resolved.download_url).await?
         };
 
         // Write trainer config file for trainer-hook.sh
+        self.set_progress("Saving trainer config...").await;
         save_trainer_config(app_id, &trainer_path, trainer_info).await?;
 
         // Build the launch options string
@@ -207,6 +301,7 @@ impl SharkDeckManager {
         {
             let mut state = self.state.write().await;
             state.status = SharkDeckStatus::Idle;
+            state.progress = None;
         }
 
         info!(
@@ -248,6 +343,7 @@ impl SharkDeckManager {
                 version: t.version.clone(),
             }),
             error: state.error.clone(),
+            progress: state.progress.clone(),
         }
     }
 
@@ -255,15 +351,16 @@ impl SharkDeckManager {
     pub async fn stop(&self) -> Result<()> {
         let mut state = self.state.write().await;
         state.status = SharkDeckStatus::Idle;
+        state.progress = None;
         info!("sharkdeck operation stopped");
         Ok(())
     }
 }
 
-/// Returns the trainers config directory (`~/.config/mugen/trainers/`).
+/// Returns the trainers config directory (`~/.config/sharkdeck/trainers/`).
 fn trainers_config_dir() -> Result<PathBuf> {
     let home = std::env::var("HOME").context("HOME not set")?;
-    Ok(PathBuf::from(home).join(".config/mugen/trainers"))
+    Ok(PathBuf::from(home).join(".config/sharkdeck/trainers"))
 }
 
 /// Saves a trainer config file for trainer-hook.sh to read.
@@ -311,7 +408,7 @@ async fn load_trainer_config(app_id: &str) -> Option<TrainerConfig> {
 /// Builds the launch options string users need to add in Steam.
 ///
 /// This is a universal hook — set it once per game and enable/disable
-/// trainers through Mugen's UI without touching Steam again.
+/// trainers through SharkDeck's UI without touching Steam again.
 fn build_launch_options() -> String {
-    "/home/deck/.local/share/mugen/trainer-hook.sh %command%".to_string()
+    "/home/deck/.local/share/sharkdeck/trainer-hook.sh %command%".to_string()
 }

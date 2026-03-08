@@ -36,22 +36,22 @@ impl Default for Config {
     }
 }
 
-/// Returns the base config directory: `~/.config/mugen/`.
+/// Returns the base config directory: `~/.config/sharkdeck/`.
 pub fn config_dir() -> Result<PathBuf> {
     let home = std::env::var("HOME").context("HOME environment variable not set")?;
-    Ok(PathBuf::from(home).join(".config").join("mugen"))
+    Ok(PathBuf::from(home).join(".config").join("sharkdeck"))
 }
 
-/// Returns the base data directory: `~/.local/share/mugen/`.
+/// Returns the base data directory: `~/.local/share/sharkdeck/`.
 pub fn data_dir() -> Result<PathBuf> {
     let home = std::env::var("HOME").context("HOME environment variable not set")?;
     Ok(PathBuf::from(home)
         .join(".local")
         .join("share")
-        .join("mugen"))
+        .join("sharkdeck"))
 }
 
-/// Ensures all required Mugen directories exist.
+/// Ensures all required SharkDeck directories exist.
 pub fn ensure_dirs() -> Result<()> {
     let config = config_dir()?;
     let data = data_dir()?;
@@ -64,6 +64,8 @@ pub fn ensure_dirs() -> Result<()> {
         data.join("profiles"),
         data.join("logs"),
         data.join("cache"),
+        data.join("cache").join("trainers"),
+        data.join("cache").join("prefixes"),
     ];
 
     for dir in &dirs {
@@ -75,7 +77,7 @@ pub fn ensure_dirs() -> Result<()> {
     Ok(())
 }
 
-/// Loads configuration from `~/.config/mugen/config.toml`.
+/// Loads configuration from `~/.config/sharkdeck/config.toml`.
 /// Returns default config if file does not exist.
 pub fn load() -> Result<Config> {
     let config_path = config_dir()?.join("config.toml");

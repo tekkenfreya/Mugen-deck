@@ -4,13 +4,15 @@ interface AppCardProps {
   app: AppInfo;
   focused: boolean;
   onSelect: () => void;
+  onHover?: () => void;
 }
 
-export function AppCard({ app, focused, onSelect }: AppCardProps) {
+export function AppCard({ app, focused, onSelect, onHover }: AppCardProps) {
   return (
     <button
       className={`app-card ${focused ? "focused" : ""}`}
       onClick={onSelect}
+      onMouseEnter={onHover}
       tabIndex={focused ? 0 : -1}
     >
       <div className="app-card-icon">

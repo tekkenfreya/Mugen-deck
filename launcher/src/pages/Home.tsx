@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AppGrid } from "@/components/AppGrid";
 import { StatusBar } from "@/components/StatusBar";
+import { MugenLogo } from "@/components/MugenLogo";
 import { useApps } from "@/hooks/useApps";
 import { getCurrentGame } from "@/api/daemon";
 import type { AppInfo, RunningGame } from "@/types";
@@ -34,9 +35,14 @@ export function Home({ onSelectApp }: HomeProps) {
     <div className="page">
       <StatusBar currentGame={currentGame} />
       <div className="page-content">
-        <h2 className="page-title">Apps</h2>
+        <div className="mugen-banner">
+          <MugenLogo size={100} />
+          <div className="mugen-banner-title">MUGEN</div>
+          <div className="mugen-banner-sub">GAME ENHANCEMENT SYSTEM</div>
+        </div>
+        <h2 className="page-title">SELECT APPLICATION</h2>
         {loading ? (
-          <p className="dim">Loading...</p>
+          <p className="dim">LOADING...</p>
         ) : (
           <AppGrid apps={apps} onSelect={onSelectApp} />
         )}

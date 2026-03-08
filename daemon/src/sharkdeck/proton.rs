@@ -105,11 +105,11 @@ pub async fn find_proton() -> Result<String> {
 }
 
 /// Checks whether .NET Framework + VC++ Runtime have been installed
-/// for the given app_id (marker file at `~/.local/share/mugen/cache/deps/<id>.done`).
+/// for the given app_id (marker file at `~/.local/share/sharkdeck/cache/deps/<id>.done`).
 pub async fn deps_installed(app_id: &str) -> bool {
     if let Ok(home) = std::env::var("HOME") {
         let marker = PathBuf::from(&home)
-            .join(".local/share/mugen/cache/deps")
+            .join(".local/share/sharkdeck/cache/deps")
             .join(format!("{}.done", app_id));
         fs::metadata(&marker).await.is_ok()
     } else {
@@ -120,7 +120,7 @@ pub async fn deps_installed(app_id: &str) -> bool {
 /// Records that deps were successfully installed for the given app_id.
 async fn mark_deps_done(app_id: &str) -> Result<()> {
     let home = std::env::var("HOME").context("HOME not set")?;
-    let dir = PathBuf::from(&home).join(".local/share/mugen/cache/deps");
+    let dir = PathBuf::from(&home).join(".local/share/sharkdeck/cache/deps");
     fs::create_dir_all(&dir).await?;
     let marker = dir.join(format!("{}.done", app_id));
     fs::write(&marker, "dotnet48 vcrun2019\n").await?;
@@ -135,7 +135,7 @@ async fn find_winetricks() -> Result<String> {
         return Ok(wt.to_string_lossy().to_string());
     }
     anyhow::bail!(
-        "winetricks not found at {} — re-run the Mugen installer",
+        "winetricks not found at {} — re-run the SharkDeck installer",
         wt.display()
     )
 }

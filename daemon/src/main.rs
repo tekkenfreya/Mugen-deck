@@ -3,9 +3,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
-use mugen_daemon::app_manager::AppManager;
-use mugen_daemon::game_detection::GameDetector;
-use mugen_daemon::{auth, config, routes, AppState};
+use sharkdeck_daemon::app_manager::AppManager;
+use sharkdeck_daemon::game_detection::GameDetector;
+use sharkdeck_daemon::sharkdeck::SharkDeckManager;
+use sharkdeck_daemon::{auth, config, routes, AppState};
 use tokio::net::TcpListener;
 use tokio::signal;
 use tracing::info;
@@ -23,7 +24,7 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    info!(version = env!("CARGO_PKG_VERSION"), "mugen-daemon starting");
+    info!(version = env!("CARGO_PKG_VERSION"), "sharkdeck-daemon starting");
 
     // Ensure all directories exist
     config::ensure_dirs()?;
@@ -39,12 +40,19 @@ async fn main() -> Result<()> {
     let app_manager = AppManager::new();
     app_manager.load_manifests().await?;
 
+    // Initialize SharkDeck
+    let sharkdeck = SharkDeckManager::new();
+
     let state = AppState {
         session_token: Arc::new(session_token),
         started_at: Instant::now(),
         game_detector,
         app_manager,
+        sharkdeck,
     };
+
+    // Keep a handle for shutdown cleanup
+    let sharkdeck_handle = state.sharkdeck.clone();
 
     // Build router
     let app = routes::router(state);
@@ -61,6 +69,10 @@ async fn main() -> Result<()> {
 
     // Clean up
     detector_handle.abort();
+    // Stop any running trainer on shutdown
+    if let Err(e) = sharkdeck_handle.stop().await {
+        tracing::warn!(error = %e, "failed to stop trainer on shutdown");
+    }
     info!("daemon shut down gracefully");
     Ok(())
 }

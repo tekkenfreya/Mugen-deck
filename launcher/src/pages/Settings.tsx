@@ -14,26 +14,26 @@ export function Settings({ onBack }: SettingsProps) {
     <div className="page">
       <div className="page-content">
         <button className="back-btn" onClick={onBack}>
-          Back
+          &lt; BACK
         </button>
-        <h2 className="page-title">Settings</h2>
+        <h2 className="page-title">SYSTEM CONFIG</h2>
         <div className="settings-section">
-          <h3>Daemon</h3>
+          <h3>DAEMON</h3>
           <div className="settings-row">
-            <span>Status</span>
+            <span>STATUS</span>
             <span className={connected ? "text-success" : "text-danger"}>
-              {connected ? "Connected" : "Disconnected"}
+              {connected ? "ONLINE" : "OFFLINE"}
             </span>
           </div>
           {health && (
             <>
               <div className="settings-row">
-                <span>Version</span>
+                <span>VERSION</span>
                 <span>{health.version}</span>
               </div>
               <div className="settings-row">
-                <span>Uptime</span>
-                <span>{health.uptime_secs}s</span>
+                <span>UPTIME</span>
+                <span>{health.uptime_secs}S</span>
               </div>
             </>
           )}

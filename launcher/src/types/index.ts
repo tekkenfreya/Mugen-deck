@@ -53,3 +53,61 @@ export interface RunningGame {
 export interface UpdateCheck {
   available: unknown[];
 }
+
+/** Information about a trainer from the daemon. */
+export interface TrainerInfo {
+  name: string;
+  game_name: string;
+  version: string;
+  download_url: string;
+  file_size?: number;
+  checksum?: string;
+  source: string;
+}
+
+/** Result of a trainer search. */
+export interface SearchResult {
+  query: string;
+  trainers: TrainerInfo[];
+  source: string;
+}
+
+/** Per-game trainer config (read from daemon). */
+export interface TrainerConfig {
+  path: string;
+  name: string;
+  game_name: string;
+  version: string;
+}
+
+/** SharkDeck subsystem status. */
+export type SharkDeckStatus =
+  | "idle"
+  | "searching"
+  | "installing_deps"
+  | "downloading"
+  | "error";
+
+/** Full status info from the SharkDeck status endpoint. */
+export interface SharkDeckStatusInfo {
+  status: SharkDeckStatus;
+  current_trainer?: {
+    name: string;
+    game_name: string;
+    version: string;
+  };
+  error?: string;
+  progress?: string;
+}
+
+/** Result of enabling a trainer. */
+export interface EnableResult {
+  trainer_path: string;
+  launch_options: string;
+  needs_restart: boolean;
+}
+
+/** Auth token response. */
+export interface AuthTokenData {
+  token: string;
+}

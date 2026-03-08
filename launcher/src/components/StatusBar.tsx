@@ -20,16 +20,16 @@ export function StatusBar({ currentGame }: StatusBarProps) {
     <div className="status-bar">
       <div className={`daemon-status ${connected ? "connected" : "disconnected"}`}>
         <span className="dot" />
-        {connected ? `Daemon v${health?.version}` : "Disconnected"}
+        {connected ? `DAEMON V${health?.version}` : "OFFLINE"}
       </div>
       {currentGame && (
         <div className="current-game">
-          Playing: {currentGame.name}
+          PLAYING: {currentGame.name.toUpperCase()}
         </div>
       )}
       {window.mugen && (
         <button className="exit-btn" onClick={() => window.mugen?.quit()}>
-          Exit
+          EXIT
         </button>
       )}
     </div>

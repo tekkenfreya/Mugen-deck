@@ -1,5 +1,20 @@
 # Mugen (無限) — Development Rules & Standards
 
+## Project Philosophy — OVERRIDES EVERYTHING
+Mugen is built for **non-technical Steam Deck users**. Every design decision must pass this test:
+
+> "Can someone who has never opened a terminal do this?"
+
+### Rules (these override all other guidance):
+1. **Zero terminal commands for end users** — the installer is the only script they ever run. After that, everything happens through the UI or Steam itself.
+2. **No URLs, no config files, no flags** — users never type an address, edit a TOML file, or pass a CLI argument. If they need to, the design is wrong.
+3. **Stupidly simple steps** — install = one script. Launch = click in Steam. Use = controller only. That's it.
+4. **Never expose internals** — users don't know what a daemon is, what a port is, or what localhost means. Don't surface these concepts anywhere in user-facing UI, logs, error messages, or instructions.
+5. **All complexity lives in the daemon** — the daemon handles everything silently: auto-start, game detection, trainer management, Proton wrangling. The user just sees results.
+6. **When documenting for developers vs users, be explicit** — dev docs can reference ports and APIs. User-facing text (installer output, UI, error messages) must assume zero technical knowledge.
+
+---
+
 ## Project Overview
 **Mugen** — A cross-platform Steam Deck framework providing built-in tools (trainers, performance tuning, frame generation) via a daemon-first architecture that survives SteamOS updates. All files live in `~/.local/` — never in system paths.
 
@@ -269,12 +284,18 @@ npm install && npm run dev
 ```
 
 ### Production Build
-```bash
-# Daemon (includes serving launcher UI via tower-http)
-cargo build --release --target x86_64-unknown-linux-gnu
+**IMPORTANT: The Rust daemon MUST be built inside WSL** — cross-compiling from Windows fails because the `ring` crate requires `x86_64-linux-gnu-gcc`. Always use WSL for daemon builds.
 
-# Launcher (build React SPA, then copy dist/ to ~/.local/share/mugen/launcher/ui/)
+```bash
+# Daemon — build in WSL (login shell required for cargo)
+wsl bash -lc 'cd "/mnt/c/Users/Egofoxxx/Documents/Development Area/mugen-deck/daemon" && cargo build --release'
+
+# Launcher (can build on Windows or WSL)
 cd launcher && npm run build  # Produces dist/ with static files
+
+# Copy artifacts to sharkdeck-install/
+cp daemon/target/release/sharkdeck-daemon sharkdeck-install/
+cp -r launcher/dist/* sharkdeck-install/ui/
 
 # Backend
 npm run build

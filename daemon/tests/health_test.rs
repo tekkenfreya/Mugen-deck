@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use mugen_daemon::app_manager::AppManager;
 use mugen_daemon::game_detection::GameDetector;
+use mugen_daemon::sharkdeck::SharkDeckManager;
 use mugen_daemon::AppState;
 use tokio::net::TcpListener;
 
@@ -16,6 +17,7 @@ async fn spawn_server() -> (SocketAddr, String) {
         started_at: Instant::now(),
         game_detector: GameDetector::new(),
         app_manager: AppManager::new(),
+        sharkdeck: SharkDeckManager::new(),
     };
 
     let app = mugen_daemon::routes::router(state);
