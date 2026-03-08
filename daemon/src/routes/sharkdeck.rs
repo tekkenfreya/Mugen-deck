@@ -177,8 +177,15 @@ pub async fn status(State(state): State<AppState>) -> Json<Value> {
     }))
 }
 
-/// POST /sharkdeck/hotkey — send a keypress to the active window via xdotool.
-pub async fn hotkey(Json(body): Json<HotkeyRequest>) -> Result<Json<Value>, AppError> {
+/// POST /sharkdeck/hotkey — send a keypress to the trainer window via xdotool.
+///
+/// Finds the trainer window by searching for Wine/Proton windows with "trainer"
+/// in the name, then sends the keypress directly to that window — even if
+/// CheatBoard (or any other app) is currently focused.
+pub async fn hotkey(
+    State(state): State<AppState>,
+    Json(body): Json<HotkeyRequest>,
+) -> Result<Json<Value>, AppError> {
     if !ALLOWED_KEYS.contains(&body.key.as_str()) {
         return Err(AppError::BadRequest(format!(
             "key '{}' is not in the allowed list",
@@ -199,26 +206,121 @@ pub async fn hotkey(Json(body): Json<HotkeyRequest>) -> Result<Json<Value>, AppE
     parts.push(&body.key);
     let key_arg = parts.join("+");
 
-    info!(key = %key_arg, "sending hotkey via xdotool");
+    // Find the trainer window ID. Try multiple search strategies:
+    // 1. Search by name containing "trainer" (most FLiNG/GCW trainers)
+    // 2. Search by name from the currently enabled trainer config
+    // 3. Fall back to the game window itself
+    let window_id = find_trainer_window(&state).await;
 
-    let output = tokio::process::Command::new("xdotool")
-        .arg("key")
-        .arg(&key_arg)
-        .output()
-        .await
-        .map_err(|e| AppError::Internal(format!("failed to run xdotool: {}", e)))?;
+    match window_id {
+        Some(wid) => {
+            info!(key = %key_arg, window = %wid, "sending hotkey to trainer window");
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        warn!(stderr = %stderr, "xdotool failed");
-        return Ok(Json(json!({
-            "ok": false,
-            "error": format!("xdotool failed: {}", stderr.trim())
-        })));
+            let output = tokio::process::Command::new("xdotool")
+                .arg("key")
+                .arg("--window")
+                .arg(&wid)
+                .arg(&key_arg)
+                .output()
+                .await
+                .map_err(|e| AppError::Internal(format!("failed to run xdotool: {}", e)))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                warn!(stderr = %stderr, "xdotool failed");
+                return Ok(Json(json!({
+                    "ok": false,
+                    "error": format!("xdotool failed: {}", stderr.trim())
+                })));
+            }
+
+            Ok(Json(json!({
+                "ok": true,
+                "data": { "sent": true, "window": wid }
+            })))
+        }
+        None => {
+            warn!(key = %key_arg, "no trainer window found, sending to game window");
+
+            // Fallback: find any Wine/Proton window (the game itself)
+            let output = tokio::process::Command::new("xdotool")
+                .arg("key")
+                .arg(&key_arg)
+                .output()
+                .await
+                .map_err(|e| AppError::Internal(format!("failed to run xdotool: {}", e)))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Ok(Json(json!({
+                    "ok": false,
+                    "error": format!("xdotool failed: {}", stderr.trim())
+                })));
+            }
+
+            Ok(Json(json!({
+                "ok": true,
+                "data": { "sent": true, "window": "active" }
+            })))
+        }
+    }
+}
+
+/// Searches for the trainer window using xdotool.
+///
+/// Tries multiple strategies to find the right window:
+/// 1. Windows with "trainer" in the name (case-insensitive)
+/// 2. Windows with "fling" in the name
+/// 3. Windows matching the enabled trainer's name
+async fn find_trainer_window(state: &AppState) -> Option<String> {
+    // Strategy 1: Search for windows with "trainer" in the name
+    let search_terms = ["trainer", "Trainer", "TRAINER", "fling", "Fling"];
+
+    for term in &search_terms {
+        if let Ok(output) = tokio::process::Command::new("xdotool")
+            .arg("search")
+            .arg("--name")
+            .arg(term)
+            .output()
+            .await
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                // xdotool returns one window ID per line; take the first
+                if let Some(wid) = stdout.lines().next() {
+                    let wid = wid.trim();
+                    if !wid.is_empty() {
+                        return Some(wid.to_string());
+                    }
+                }
+            }
+        }
     }
 
-    Ok(Json(json!({
-        "ok": true,
-        "data": { "sent": true }
-    })))
+    // Strategy 2: Search by the enabled trainer's name from config
+    let current_game = state.game_detector.current_game.read().await;
+    if let Some(game) = current_game.as_ref() {
+        if let Some(config) = state.sharkdeck.get_enabled(&game.app_id.to_string()).await {
+            // Try the trainer name as a window search term
+            if let Ok(output) = tokio::process::Command::new("xdotool")
+                .arg("search")
+                .arg("--name")
+                .arg(&config.name)
+                .output()
+                .await
+            {
+                if output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    if let Some(wid) = stdout.lines().next() {
+                        let wid = wid.trim();
+                        if !wid.is_empty() {
+                            return Some(wid.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
 }
